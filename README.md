@@ -28,7 +28,9 @@ Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应�
 
 ## Desktop：应用内切换
 
-Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内切换到 chat.deepseek.com。**点网页左上角的 DeepSeek logo 即可切回**——它原本的行为被接管，成为返回键。顶部中央另有一个「← 返回」按钮兜底（避开 Windows 右上角的窗口按钮、macOS 左上角的红绿灯，以及网页自身的 logo）。切回后再点 DSH 的标题会回到同一视图（不重新加载，保留视图内状态）。Windows 下 DSH 的顶栏（「应用」「编辑」菜单与窗口控制按钮）保留在视图上方——视图与宿主的 AppFrame 一样从顶栏下方（`--dsh-windows-titlebar-height`，40px）开始，不覆盖它。
+Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内把**右侧内容区**换成 chat.deepseek.com：顶栏（「应用」「编辑」菜单与窗口控制按钮）和左侧边栏（logo、会话列表、工作区、费用、账户）都原样保留。**点 DSH 侧边栏的蓝色 logo，或点网页自己的 logo，都能切回**；视图顶部中央另有「← 返回」按钮兜底。切回后再点 DSH 的标题会回到同一视图（不重新加载，保留视图内状态）。
+
+视图的位置和圆角不是写死的：宿主的 frame 元素发布 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`，顶栏高度由 Windows preload 写在 `<html>` 上；插件在每次切换时读取这三者并套用到视图上，所以侧边栏拖拽或折叠之后，视图仍与内容区严丝合缝。
 
 这不是 Codex 那种原生产品切换——Codex 的 ChatGPT/Codex 都是 OpenAI 自家界面，而 DeepSeek Chat 是 DSH 之外的独立网站，只能用 Electron webview 嵌入。由此带来三点**由 DSH 壳的安全策略决定**的限制：
 
