@@ -1,13 +1,13 @@
 # @guojing6/dsh-deepseek-chat
 
-DeepSeek Harness 客户端插件（web 与 desktop profile），把侧边栏顶部的 **DeepSeek Harness** 标题由「新建会话」改为产品切换菜单，仿 Codex 客户端 ChatGPT/Codex 的切换方式：
+DeepSeek Harness 客户端插件（web 与 desktop profile），把侧边栏顶部的 **DeepSeek Harness** 标题由「新建会话」改为 DeepSeek Chat 的切换开关，仿 Codex 客户端 ChatGPT/Codex 的切换方式：
 
-| 选项 | 说明 | 行为 |
-| --- | --- | --- |
-| DeepSeek Chat | 创建、学习和探索 | Desktop：在**应用内**切换到 chat.deepseek.com（窗口内嵌视图）；Web：当前页跳转 |
-| DeepSeek Harness ✓ | 构建、调试和发布 | 切回 DSH / 关闭菜单，保留当前会话与草稿 |
+| 点哪里 | 结果 |
+| --- | --- |
+| DSH 侧边栏顶部的标题 | Desktop：在**应用内**切换到 chat.deepseek.com（窗口内嵌视图）；Web：当前页跳转 |
+| 嵌入视图里网页自己的 logo | 切回 DSH（Desktop） |
 
-再次点击标题可关闭菜单；独立的「新会话」按钮不受影响。展开侧边栏后点击顶部标题即可使用。
+没有菜单——点一下就切换，两个方向读起来一致。独立的「新会话」按钮不受影响；展开侧边栏后点顶部标题即可使用。
 
 ## 安装
 
@@ -28,7 +28,7 @@ Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应�
 
 ## Desktop：应用内切换
 
-Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内切换到 chat.deepseek.com。**点网页左上角的 DeepSeek logo 即可切回**——它原本的行为被接管，成为返回键。顶部中央另有一个「← 返回」按钮兜底（避开 Windows 右上角的窗口按钮、macOS 左上角的红绿灯，以及网页自身的 logo）。标题菜单里再次选择 DeepSeek Chat 也会回到该视图（不重新加载，保留视图内状态）。
+Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内切换到 chat.deepseek.com。**点网页左上角的 DeepSeek logo 即可切回**——它原本的行为被接管，成为返回键。顶部中央另有一个「← 返回」按钮兜底（避开 Windows 右上角的窗口按钮、macOS 左上角的红绿灯，以及网页自身的 logo）。切回后再点 DSH 的标题会回到同一视图（不重新加载，保留视图内状态）。
 
 这不是 Codex 那种原生产品切换——Codex 的 ChatGPT/Codex 都是 OpenAI 自家界面，而 DeepSeek Chat 是 DSH 之外的独立网站，只能用 Electron webview 嵌入。由此带来三点**由 DSH 壳的安全策略决定**的限制：
 
@@ -40,11 +40,11 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 ## 实现
 
-- `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为开关圆角菜单。
+- `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为切换 DeepSeek Chat 视图。
 - Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再加载 chat.deepseek.com（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。每次加载完成后用 `executeJavaScript` 注入返回脚本：它按启发式识别页面左上角的 logo，接管其点击，并以同源 hash 变化（`#dsh-return`）通知宿主——壳的导航策略只放行 http(s)，自定义协议无法传递信号，而 hash 变化无需重载。隐藏时保留 guest 以便即时切回，插件停用时释放租约并移除元素。
 - `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。
-- 菜单为固定浅色样式，点击外部关闭；只绑定一次，宿主重建侧边栏后需刷新页面重绑。
-- 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除菜单与样式。
+- 开关只绑定一次，宿主重建侧边栏后需刷新页面重绑。
+- 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除样式。
 
 ## 检查
 
