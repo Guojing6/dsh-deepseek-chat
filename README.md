@@ -30,7 +30,7 @@ Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应�
 
 Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内把**右侧内容区**换成 chat.deepseek.com：顶栏（「应用」「编辑」菜单与窗口控制按钮）和左侧边栏（logo、会话列表、工作区、费用、账户）都原样保留。
 
-返回有三个入口：**点网页左上角的 DeepSeek logo**（首选）、**点右下角的「← 返回 DeepSeek Harness」悬浮按钮**（兜底）、或点侧边栏顶部的标题。切回后再点标题会回到同一视图（不重新加载，保留视图内状态）。
+返回有两个入口：**右下角的「← 返回」悬浮按钮**（位于输入框右侧上方，不遮挡发送按钮），或**点侧边栏顶部的标题**。切回后再点标题会回到同一视图（不重新加载，保留视图内状态）。
 
 视图的位置和圆角不是写死的：宿主的 frame 元素发布 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`，顶栏高度由 Windows preload 写在 `<html>` 上；插件在每次切换时读取这三者并套用到视图上，所以侧边栏拖拽或折叠之后，视图仍与内容区严丝合缝。
 
@@ -40,12 +40,10 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 - **权限被全部拒绝。** 通知、剪贴板、设备权限一律拒绝，**下载被禁止**，视图内也不能访问 DSH 自身的服务地址。
 - **依赖 DSH 的内部桥。** 视图通过主应用文档上的 `window.dshDesktop.browser` 申请 guest 租约（DSH 只接受持有租约的 `<webview>`）。这是 DSH 的内部契约，升级后可能变化；一旦不可用，插件会回退到系统浏览器打开。
 
-另有一条来自第三方页面的脆弱性：**「点网页 logo 返回」依赖 DeepSeek 的页面结构**。注入脚本按「页面左上角、尺寸小、含图形」的启发式识别并接管它的点击，DeepSeek 前端改版后可能失配——右下角的悬浮按钮正是为此保留的兜底。
-
 ## 实现
 
 - `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为切换 DeepSeek Chat 视图。
-- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再加载 chat.deepseek.com（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。每次加载完成后用 `executeJavaScript` 注入返回脚本：它按启发式识别页面左上角的 logo，接管其点击，并以同源 hash 变化（`#dsh-return`）通知宿主——壳的导航策略只放行 http(s)，自定义协议无法传递信号，而 hash 变化无需重载。隐藏时保留 guest 以便即时切回，插件停用时释放租约并移除元素。
+- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再加载 chat.deepseek.com（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。**不向 guest 注入任何脚本**：网页按浏览器里的原样运行，返回只靠插件自己的悬浮按钮与侧边栏标题。隐藏时保留 guest 以便即时切回，插件停用时释放租约并移除元素。
 - `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。
 - 开关只绑定一次，宿主重建侧边栏后需刷新页面重绑。
 - 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除样式。
