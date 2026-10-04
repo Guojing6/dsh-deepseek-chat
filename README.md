@@ -28,7 +28,7 @@ Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应�
 
 ## Desktop：应用内切换
 
-Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内切换到 chat.deepseek.com。窗口右上角有「返回 DeepSeek Harness」按钮切回；标题菜单里再次选择 DeepSeek Chat 也会回到该视图（不重新加载，保留视图内状态）。
+Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个窗口内切换到 chat.deepseek.com。窗口角落的「← 返回」按钮可切回（Windows 在左上角、macOS 在右上角，各自避开系统的窗口控制按钮）；标题菜单里再次选择 DeepSeek Chat 也会回到该视图（不重新加载，保留视图内状态）。
 
 这不是 Codex 那种原生产品切换——Codex 的 ChatGPT/Codex 都是 OpenAI 自家界面，而 DeepSeek Chat 是 DSH 之外的独立网站，只能用 Electron webview 嵌入。由此带来三点**由 DSH 壳的安全策略决定**的限制：
 
