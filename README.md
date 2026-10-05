@@ -11,20 +11,27 @@ DeepSeek Harness 客户端插件（web 与 desktop profile），把侧边栏顶�
 
 ## 安装
 
-包尚未发布到 npm，目前仅支持源码安装（需要 pnpm）。Web 与 Desktop 使用各自独立的 profile（`$DSH_HOME/profiles/web` 与 `$DSH_HOME/profiles/desktop`），互不共享插件，需分别安装：
+已发布到 npm：`@guojing6/dsh-deepseek-chat`。Web 与 Desktop 使用各自独立的 profile（`$DSH_HOME/profiles/web` 与 `$DSH_HOME/profiles/desktop`），互不共享插件，需分别安装：
+
+```sh
+# Web
+dsh plugin --profile web add @guojing6/dsh-deepseek-chat
+
+# Desktop：先启动一次 Desktop 初始化其 profile，完全退出后再执行
+dsh plugin --profile desktop add @guojing6/dsh-deepseek-chat
+```
+
+`dsh plugin` 会在 profile 目录里转发给 pnpm，所以 pnpm 的写法都可用——锁版本用 `@guojing6/dsh-deepseek-chat@2.0.1`，卸载用 `dsh plugin --profile <name> remove @guojing6/dsh-deepseek-chat`。
+
+Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应用（关闭窗口只是收进托盘，需要从托盘完全退出）。Desktop 也可用其自带的 `resources/runtime/cli/bin/dsh` 执行同样的命令。
+
+也可以从源码安装（需要 pnpm）：
 
 ```sh
 git clone https://github.com/Guojing6/dsh-deepseek-chat.git
 cd dsh-deepseek-chat
-
-# Web
 dsh plugin --profile web add .
-
-# Desktop：先启动一次 Desktop 初始化其 profile，完全退出后再执行
-dsh plugin --profile desktop add .
 ```
-
-Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应用。Desktop 也可用其自带的 `resources/runtime/cli/bin/dsh` 执行同样的命令。
 
 ## Desktop：应用内切换
 
@@ -81,3 +88,14 @@ npm test        # 会话镜像的往返测试（node --test，无外部依赖）
 ```
 
 `test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖快照裁剪、恢复写入、失败上报，以及宿主侧快照的版本与来源校验。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
+
+## 发布
+
+```sh
+pnpm publish            # 直接发预构建产物，本包没有构建步骤，也不需要 prepare 授权
+git tag v2.0.1 && git push origin v2.0.1
+```
+
+`files` 只含 `lib/index.js`、`lib/client.js` 与 `cordis.patch.yml`；`README.md` 与 `LICENSE` 由 npm 自动附带，`test/` 不进包。凭证写在 `//registry.npmjs.org/:_authToken`（本机 `~/.npmrc` 或仓库根目录 `.npmrc`），仓库里的 `.npmrc` 已被 `.gitignore` 排除。
+
+包名必须与 `cordis.patch.yml` 里那一行的 `name` 一致——npm 安装后 patch 只能按包名解析，写相对路径会加载失败。

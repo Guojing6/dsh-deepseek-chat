@@ -39,11 +39,12 @@
     "type": "git",
     "url": "git+https://github.com/Guojing6/dsh-deepseek-chat.git"
   },
+  "homepage": "https://github.com/Guojing6/dsh-deepseek-chat#readme",
+  "bugs": {
+    "url": "https://github.com/Guojing6/dsh-deepseek-chat/issues"
+  },
   "publishConfig": {
     "access": "public"
-  },
-  "devDependencies": {
-    "jsdom": "^26.1.0"
   },
   "scripts": {
     "test": "node --test",
