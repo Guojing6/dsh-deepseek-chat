@@ -50,7 +50,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 - **视图定位。** `readFrameInsets()` 从品牌元素向上找到 `#root` 的直接子元素（即 `.frame`），读它的 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`；顶栏高度取自 `<html>` 上的 `--dsh-windows-titlebar-height`。前两个变量定义在 `.frame` 上而非 `<html>`，CSS 继承读不到，只能从 DOM 取。**若 DSH 在 `#root` 下新增包装层，取值会落空**，表现为 `left` 退化为 0、视图重新盖住侧边栏。
 - **品牌定位。** `span[class*="brandIdentity"]` 匹配的是 CSS Module 的稳定局部名（已不依赖构建哈希），但 DSH 若重命名这个局部名，选择器即失效——症状是**点标题毫无反应且不报错**。
-- **悬停高亮的留白。** 宿主的品牌是 `flex:1` 的整行按钮（`.brand`），直接把背景画在触发器上会从 logo 一直铺到行尾；插件改成给 `brandIdentity` 加内边距、再配等量负外边距抵消位移，让高亮只包住 logo 与文字。左右各留 4px 是按宿主 `.brand` 自身的左内边距取的，DSH 若改这个值，高亮会被行的 `overflow:hidden` 削掉一角。
+- **悬停高亮的留白。** 宿主的品牌是 `flex:1` 的整行按钮（`.brand`），直接把背景画在触发器上会从 logo 一直铺到行尾；插件改成给 `brandIdentity` 加内边距、再配等量负外边距抵消位移，让高亮只包住 logo 与文字。左右各留 4px 是按宿主 `.brand` 自身的左内边距取的，DSH 若改这个值，高亮会被行的 `overflow:hidden` 削掉一角。高亮色取宿主的 `--dsw-alias-interactive-bg-hover`（侧边栏行悬停用的同一个 token），随浅深色主题切换。
 - **只绑定一次。** 首次找到标题后 `MutationObserver` 即断开，宿主重建侧边栏后需刷新页面才会重绑。
 
 ### 三、本实现自身的取舍
@@ -59,6 +59,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 - **Web 端行为随之改变。** 同一份代码在 web 下走另一条路径：点标题直接 `location.assign(chat.deepseek.com)`，不再弹菜单。若希望 Web 保留菜单式交互，需要按 `IS_DESKTOP` 分成两条路径。
 - **macOS 分支未实测。** 品牌在 macOS Desktop 下是窗口拖拽行里的 `span`（不是 button），代码按 `closest("button") ?? parentElement` 回退并补 `role="button"` / `tabindex="0"`，依据是 `SidebarRoot.tsx` 与 `base.css` 的规则推导，未在真机验证。
 - **按钮位置是按截图估算的。** `right: 24px; bottom: 150px` 由截图缩放比例换算而来，未做像素级校准。
+- **返回按钮的颜色刻意不跟随 DSH 主题。** 它浮在 chat.deepseek.com 的页面上，而那个页面是浅色的：改用 `--dsw-alias-label-tertiary` 的话，深色主题下会解析成 `neutral-bluish-400`（#ADB2B8），压在白底上几乎看不见；浅色主题下又变成 `neutral-bluish-600`（#81858C），比现在深得多。所以这里按「压在浅色页面上」写死 `#b0b5bd`（≈ `neutral-bluish-400`），深浅色 DSH 下都看得见。品牌悬停高亮则相反——它画在 DSH 自己的侧边栏上，所以跟着主题走。
 - **登录态镜像多存了一份明文 token。** 快照存在 `dsh-app://app` 源的 localStorage 里（键 `dsh-deepseek-chat:chat-session`），同应用内的其他插件都能读到；它和浏览器里保存的是同一类凭证，但确实多了一个副本，且卸载插件不会自动清掉这份快照。
 - **镜像只在页面确实持有 `userToken` 时才覆盖。** 好处是某次加载异常不会把还能用的 token 冲掉；代价是正常登出后旧快照会留到下次启动、被恢复一次再由服务端判定失效——结果正确，只是多一次无效恢复。
 - **有快照时多一次同源导航。** 启动路径是 `about:blank → /robots.txt → 首页`，多一个极小的静态请求；种子页加载失败就直接进首页，本次不恢复、快照保留待下次。
