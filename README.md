@@ -50,6 +50,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 - **视图定位。** `readFrameInsets()` 从品牌元素向上找到 `#root` 的直接子元素（即 `.frame`），读它的 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`；顶栏高度取自 `<html>` 上的 `--dsh-windows-titlebar-height`。前两个变量定义在 `.frame` 上而非 `<html>`，CSS 继承读不到，只能从 DOM 取。**若 DSH 在 `#root` 下新增包装层，取值会落空**，表现为 `left` 退化为 0、视图重新盖住侧边栏。
 - **品牌定位。** `span[class*="brandIdentity"]` 匹配的是 CSS Module 的稳定局部名（已不依赖构建哈希），但 DSH 若重命名这个局部名，选择器即失效——症状是**点标题毫无反应且不报错**。
+- **悬停高亮的留白。** 宿主的品牌是 `flex:1` 的整行按钮（`.brand`），直接把背景画在触发器上会从 logo 一直铺到行尾；插件改成给 `brandIdentity` 加内边距、再配等量负外边距抵消位移，让高亮只包住 logo 与文字。左右各留 4px 是按宿主 `.brand` 自身的左内边距取的，DSH 若改这个值，高亮会被行的 `overflow:hidden` 削掉一角。
 - **只绑定一次。** 首次找到标题后 `MutationObserver` 即断开，宿主重建侧边栏后需刷新页面才会重绑。
 
 ### 三、本实现自身的取舍
