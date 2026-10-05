@@ -1,7 +1,7 @@
 {
   "name": "@guojing6/dsh-deepseek-chat",
-  "version": "1.0.0",
-  "description": "DeepSeek Harness title dropdown: open DeepSeek Chat in the current page or close the menu by selecting DeepSeek Harness.",
+  "version": "2.0.0",
+  "description": "DeepSeek Harness client plugin: switch the sidebar title into an in-app DeepSeek Chat view (desktop) or open it in the current page (web).",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
