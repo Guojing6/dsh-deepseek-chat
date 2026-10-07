@@ -161,3 +161,108 @@ describe('host-side snapshot', () => {
     assert.equal(probe.readSession(), null, 'must report a missing snapshot')
   })
 })
+
+/**
+ * A DOM stand-in rich enough to activate the plugin. `brand` makes the sidebar title
+ * findable, which is what turns the switcher on.
+ */
+function fakeDom(options = {}) {
+  const make = (tag) => {
+    const attributes = new Map()
+    const listeners = []
+    return {
+      tagName: tag.toUpperCase(),
+      id: '',
+      type: '',
+      title: '',
+      hidden: false,
+      style: {},
+      children: [],
+      attributes,
+      listeners,
+      textContent: '',
+      innerHTML: '',
+      setAttribute(name, value) { attributes.set(name, String(value)) },
+      removeAttribute(name) { attributes.delete(name) },
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+      appendChild(child) { this.children.push(child); return child },
+      removeChild(child) { this.children = this.children.filter((entry) => entry !== child) },
+      remove() {},
+      addEventListener(type, listener) { listeners.push([type, listener]) },
+      removeEventListener() {},
+      contains: () => false,
+      closest: () => null,
+    }
+  }
+  const brandIdentity = make('span')
+  const brandButton = make('button')
+  brandIdentity.closest = (selector) => (selector === 'button' ? brandButton : null)
+  const documentElement = make('html')
+  documentElement.dataset = {}
+  const documentListeners = new Map()
+  const document = {
+    documentElement,
+    head: make('head'),
+    body: make('body'),
+    createElement: make,
+    querySelector: (selector) => (options.brand === true && selector.includes('brandIdentity') ? brandIdentity : null),
+    addEventListener: (type, listener) => { documentListeners.set(type, listener) },
+    removeEventListener: (type) => { documentListeners.delete(type) },
+  }
+  return { document, brandIdentity, brandButton, documentListeners }
+}
+
+/** Load the real source — no probe patch — against a DOM stand-in it can activate on. */
+function loadForActivation(options = {}) {
+  const source = readFileSync(SOURCE, 'utf8')
+  const dom = fakeDom(options)
+  const host = {
+    window: {
+      __ModuleLoader__: { load: (module) => { host.__factory = module.factory } },
+      location: { protocol: 'dsh-app:' },
+      setInterval: () => 1,
+      clearInterval: () => {},
+      open: () => {},
+    },
+    document: dom.document,
+    localStorage: storage(),
+    MutationObserver: class { observe() {} disconnect() {} },
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    console,
+    Date,
+    JSON,
+    Object,
+    String,
+  }
+  vm.createContext(host)
+  vm.runInContext(source, host)
+  assert.equal(typeof host.__factory, 'function', 'factory not captured')
+  return { module: host.__factory(), dom }
+}
+
+// Nothing else in this file calls `apply`, and that gap is how a fatal ReferenceError
+// inside the activation path once shipped: the module loaded, every helper tested clean,
+// and the plugin was dead on Desktop. These cases run the real source end to end.
+describe('activation', () => {
+  it('activates on desktop and hands the context a teardown', () => {
+    const { module } = loadForActivation()
+    let dispose = null
+    const ctx = { effect: (fn) => { dispose = fn(); return () => {} } }
+    assert.doesNotThrow(() => { module.apply(ctx) })
+    assert.equal(typeof dispose, 'function', 'apply must give ctx.effect the teardown')
+    assert.doesNotThrow(() => { dispose() })
+  })
+
+  it('binds the sidebar title and puts the chrome back on teardown', () => {
+    const { module, dom } = loadForActivation({ brand: true })
+    let dispose = null
+    module.apply({ effect: (fn) => { dispose = fn(); return () => {} } })
+    assert.equal(dom.brandButton.getAttribute('data-dsh-product-trigger'), '')
+    assert.equal(dom.brandButton.getAttribute('aria-label'), '切换 DeepSeek Chat')
+    assert.ok(dom.brandButton.listeners.some(([type]) => type === 'click'), 'the brand must answer clicks')
+    assert.ok(dom.documentListeners.has('click'), 'the host-click guard must be watching')
+    dispose()
+    assert.equal(dom.brandButton.getAttribute('data-dsh-product-trigger'), null, 'teardown must restore the title')
+    assert.equal(dom.documentListeners.has('click'), false, 'teardown must drop the host-click guard')
+  })
+})

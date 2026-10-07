@@ -55,13 +55,14 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 ### 二、依赖宿主 DOM 结构（DSH 改版可能失效）
 
-- **视图定位。** `readFrameInsets()` 从品牌元素向上找到 `#root` 的直接子元素（即 `.frame`），读它的 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`；顶栏高度取自 `<html>` 上的 `--dsh-windows-titlebar-height`。前两个变量定义在 `.frame` 上而非 `<html>`，CSS 继承读不到，只能从 DOM 取。**若 DSH 在 `#root` 下新增包装层，取值会落空**，表现为 `left` 退化为 0、视图重新盖住侧边栏。
+- **视图定位。** `readFrameInsets()` 从品牌元素向上找到 `#root` 的直接子元素（即 `.frame`），读它的 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`；顶栏高度取自 `<html>` 上的 `--dsh-windows-titlebar-height`。前两个变量定义在 `.frame` 上而非 `<html>`，CSS 继承读不到，只能从 DOM 取。视图打开时另有一个 `MutationObserver` 盯着 `.frame` 的 `style` 与 `data-sidebar-collapsed`，所以**开着视图拖侧栏或折叠，视图会跟着走**（宿主拖拽时正是把这些值重写进自己的内联样式，见 `AppFrame.tsx`）。又因为 `--dsh-windows-sidebar-width` 只在 Windows 上发布（同一处被 `data-windows-titlebar` 门控），其余平台退回解析 `.frame` 的 `grid-template-columns` 首轨——那是宿主每帧都写的列解算，于是 `left` 不再退化为 0 而盖住侧栏。**若 DSH 在 `#root` 下新增包装层，两条路径会一起落空**，表现为 `left` 退化为 0、视图重新盖住侧边栏。
 - **品牌定位。** `span[class*="brandIdentity"]` 匹配的是 CSS Module 的稳定局部名（已不依赖构建哈希），但 DSH 若重命名这个局部名，选择器即失效——症状是**点标题毫无反应且不报错**。
 - **悬停高亮的留白。** 宿主的品牌是 `flex:1` 的整行按钮（`.brand`），直接把背景画在触发器上会从 logo 一直铺到行尾；插件改成给 `brandIdentity` 加内边距、再配等量负外边距抵消位移，让高亮只包住 logo 与文字。左右各留 4px 是按宿主 `.brand` 自身的左内边距取的，DSH 若改这个值，高亮会被行的 `overflow:hidden` 削掉一角。高亮色取宿主的 `--dsw-alias-interactive-bg-hover`（侧边栏行悬停用的同一个 token），随浅深色主题切换。
 - **只绑定一次。** 首次找到标题后 `MutationObserver` 即断开，宿主重建侧边栏后需刷新页面才会重绑。
 
 ### 三、本实现自身的取舍
 
+- **点侧栏会收起视图。** 侧栏与标题栏留在视图之外、始终可点，所以插件在捕获阶段监听文档的 `click`：落到视图与品牌之外（会话行、设置、窗口菜单）就先收起视图，免得宿主把内容画在视图背后、看起来像「点了没反应」。品牌本身豁免——它自己的处理器就是那个开关。
 - **侧边栏折叠时没有返回入口。** 折叠状态下品牌元素不渲染（`SidebarRoot` 里是 `{wide && …}`），此时需先点顶栏的折叠按钮展开侧边栏，再点标题切回。
 - **Web 端行为随之改变。** 同一份代码在 web 下走另一条路径：点标题直接 `location.assign(chat.deepseek.com)`，不再弹菜单。若希望 Web 保留菜单式交互，需要按 `IS_DESKTOP` 分成两条路径。
 - **macOS 分支未实测。** 品牌在 macOS Desktop 下是窗口拖拽行里的 `span`（不是 button），代码按 `closest("button") ?? parentElement` 回退并补 `role="button"` / `tabindex="0"`，依据是 `SidebarRoot.tsx` 与 `base.css` 的规则推导，未在真机验证。
@@ -75,7 +76,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 ## 实现
 
 - `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为切换 DeepSeek Chat 视图。
-- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再按「bootstrap → 种子页 → 首页」推进（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。**对 guest 只做存储读写、不改页面**：`dom-ready` 与每 15 秒各读一次 guest 的 localStorage（超长非关键键会按 200 KB 上限裁掉，`userToken` 与 `__appKit_userInfo` 永不裁），仅在读到 `userToken` 时写入宿主快照；下次启动先加载 `/robots.txt`（同源、31 字节、不启动应用），把快照写回后再进首页。隐藏时保留 guest 以便即时切回并顺手快照一次，插件停用时清除定时器、释放租约并移除元素。
+- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再按「bootstrap → 种子页 → 首页」推进（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。**对 guest 只做存储读写、不改页面**：`dom-ready` 与可见期间每 15 秒各读一次 guest 的 localStorage（超长非关键键会按 200 KB 上限裁掉，`userToken` 与 `__appKit_userInfo` 永不裁），仅在读到 `userToken` 时写入宿主快照；下次启动先加载 `/robots.txt`（同源、31 字节、不启动应用），把快照写回后再进首页。隐藏时保留 guest 以便即时切回，同时停掉轮询并顺手快照一次；视图只在租约到手后才显示（先显示会先露出一块白底）；构建失败会把元素与租约一起退回，插件停用时停表、断开布局观察器、释放租约并移除元素。
 - `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。
 - 开关只绑定一次，宿主重建侧边栏后需刷新页面重绑。
 - 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除样式。
@@ -84,10 +85,10 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 ```sh
 npm run check   # 语法检查（node --check lib/*.js）
-npm test        # 会话镜像的往返测试（node --test，无外部依赖）
+npm test        # 8 个用例（node --test，无外部依赖）
 ```
 
-`test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖快照裁剪、恢复写入、失败上报，以及宿主侧快照的版本与来源校验。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
+`test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖两段：会话镜像的快照裁剪、恢复写入、失败上报与宿主侧快照的版本/来源校验；以及**激活冒烟测试**——不加任何探针、直接跑真实源码的 `apply`，断言 Desktop 下不抛错、拿到可用的 teardown、品牌被绑上 `data-dsh-product-trigger` 与点击监听、卸载时属性与文档监听都被还原。这一段是补上来的：此前没有任何用例调用过 `apply`，所以「激活路径里引用未定义变量」这类故障能一路漏过去（故意注入一个未定义全局做变异测试，正是这两个用例报错）。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
 
 ## 发布
 
