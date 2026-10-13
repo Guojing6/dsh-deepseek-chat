@@ -12,27 +12,21 @@ DeepSeek Harness 客户端插件（web 与 desktop profile），把侧边栏顶�
 
 ## 安装
 
-已发布到 npm：`@guojing6/dsh-deepseek-chat`。Web 与 Desktop 使用各自独立的 profile（`$DSH_HOME/profiles/web` 与 `$DSH_HOME/profiles/desktop`），互不共享插件，需分别安装：
-
-```sh
-# Web
-dsh plugin --profile web add @guojing6/dsh-deepseek-chat
-
-# Desktop：先启动一次 Desktop 初始化其 profile，完全退出后再执行
-dsh plugin --profile desktop add @guojing6/dsh-deepseek-chat
-```
-
-`dsh plugin` 会在 profile 目录里转发给 pnpm，所以 pnpm 的写法都可用——锁版本用 `@guojing6/dsh-deepseek-chat@2.0.1`，卸载用 `dsh plugin --profile <name> remove @guojing6/dsh-deepseek-chat`。
-
-Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应用（关闭窗口只是收进托盘，需要从托盘完全退出）。Desktop 也可用其自带的 `resources/runtime/cli/bin/dsh` 执行同样的命令。
-
-也可以从源码安装（需要 pnpm）：
+本插件从源码安装。Web 与 Desktop 使用各自独立的 profile（`$DSH_HOME/profiles/web` 与 `$DSH_HOME/profiles/desktop`），互不共享插件，需分别安装：
 
 ```sh
 git clone https://github.com/Guojing6/dsh-deepseek-chat.git
-cd dsh-deepseek-chat
-dsh plugin --profile web add .
+
+# Web
+dsh plugin --profile web add ./dsh-deepseek-chat
+
+# Desktop：先启动一次 Desktop 初始化其 profile，完全退出后再执行
+dsh plugin --profile desktop add ./dsh-deepseek-chat
 ```
+
+`dsh plugin` 会在 profile 目录里转发给 pnpm，所以 pnpm 的写法都可用——本地目录也可以直接给绝对路径（例如 `dsh plugin --profile desktop add E:/workspace/dsh-deepseek-chat`，profile 里会记成 `link:`），卸载用 `dsh plugin --profile <name> remove @guojing6/dsh-deepseek-chat`。
+
+Web 安装后重启 Harness 并刷新网页；Desktop 安装后重新打开应用（关闭窗口只是收进托盘，需要从托盘完全退出）。Desktop 也可用其自带的 `resources/runtime/cli/bin/dsh` 执行同样的命令。
 
 ## Desktop：应用内切换
 
@@ -82,7 +76,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 - `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为切换 DeepSeek Chat 视图。
 - Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再按「bootstrap → 种子页 → 首页」推进（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在**同一视图**打开——所以回答里的链接会把 guest 带离 chat 界面，返回按钮因此按地址分两种语义（`isChatUrl` / `isGuestPage`）：网页在眼前时 `goBack()`（guest 无法后退则 `loadURL` 到记录下来的最后一个 chat 地址），回到 chat 界面；chat 界面在眼前时收起视图。`did-navigate` 与 `did-navigate-in-page` 都会刷新按钮文案并记录 chat 地址，所以应用内部的路由跳转也算数。**读 guest 一律经过 `guestUrl()`**：`dom-ready` 之前元素的方法都会抛错，而视图在租约到手时就露出来了（见「已知问题」里那条），所以显示路径只用 `guestReady` 为真时的地址，否则当作「没有页面」。**对 guest 只做存储读写、不改页面**：`dom-ready` 与可见期间每 15 秒各读一次 guest 的 localStorage（超长非关键键会按 200 KB 上限裁掉，`userToken` 与 `__appKit_userInfo` 永不裁），仅在读到 `userToken` 时写入宿主快照；下次启动先加载 `/robots.txt`（同源、31 字节、不启动应用），把快照写回后再进首页。隐藏时保留 guest 以便即时切回，同时停掉轮询并顺手快照一次；视图只在租约到手后才显示（先显示会先露出一块白底）；构建失败会把元素与租约一起退回，插件停用时停表、断开布局观察器、释放租约并移除元素。
-- `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。
+- `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。后者的 `name` 必须与 `package.json` 的 `name` 一致——安装后 patch 只按包名解析，写相对路径会加载失败。
 - 开关只绑定一次，宿主重建侧边栏后需刷新页面重绑。
 - 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除样式。
 
@@ -94,14 +88,3 @@ npm test        # 14 个用例（node --test，无外部依赖）
 ```
 
 `test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖四段：会话镜像的快照裁剪、恢复写入、失败上报与宿主侧快照的版本/来源校验；**地址判定**——chat 应用、插件自己的种子页、从对话点开的外链、非 http(s) 文档各归哪一类；以及**激活冒烟测试**——不加任何探针、直接跑真实源码的 `apply`，断言 Desktop 下不抛错、拿到可用的 teardown、品牌被绑上 `data-dsh-product-trigger` 与点击监听、卸载时属性与文档监听都被还原，并用桩 guest 打开视图，验证那颗圆按钮在「网页在眼前」时走 guest 的后退（guest 报不了后退就重载记录下来的 chat 地址）、在「chat 界面在眼前」时收起视图、文案跟着变。桩 guest 照抄 Electron 的契约：**`dom-ready` 之前任何方法都抛错**，所以「启动后第一次点击就露视图」这条回归会被用例当场抓住。激活这一段是补上来的：此前没有任何用例调用过 `apply`，所以「激活路径里引用未定义变量」这类故障能一路漏过去（故意注入一个未定义全局做变异测试，正是这两个用例报错）。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
-
-## 发布
-
-```sh
-pnpm publish            # 直接发预构建产物，本包没有构建步骤，也不需要 prepare 授权
-git tag v2.0.1 && git push origin v2.0.1
-```
-
-`files` 只含 `lib/index.js`、`lib/client.js` 与 `cordis.patch.yml`；`README.md` 与 `LICENSE` 由 npm 自动附带，`test/` 不进包。凭证写在 `//registry.npmjs.org/:_authToken`（本机 `~/.npmrc` 或仓库根目录 `.npmrc`），仓库里的 `.npmrc` 已被 `.gitignore` 排除。
-
-包名必须与 `cordis.patch.yml` 里那一行的 `name` 一致——npm 安装后 patch 只能按包名解析，写相对路径会加载失败。
