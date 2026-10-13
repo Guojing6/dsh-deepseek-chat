@@ -50,7 +50,7 @@ function loadPlugin() {
   const source = readFileSync(SOURCE, 'utf8')
   const patched = source.replace(
     'return { apply };',
-    'globalThis.__probe = { READ_STORAGE, writeStorageScript, readSession, writeSession, SESSION_KEY, SESSION_VERSION, CHAT_ORIGIN };\nreturn { apply };',
+    'globalThis.__probe = { READ_STORAGE, writeStorageScript, readSession, writeSession, isChatUrl, isGuestPage, SESSION_KEY, SESSION_VERSION, CHAT_ORIGIN };\nreturn { apply };',
   )
   // Fail loudly if the factory's shape changes rather than passing on a stale probe.
   assert.notEqual(patched, source, 'could not expose the plugin internals for testing')
@@ -162,15 +162,34 @@ describe('host-side snapshot', () => {
   })
 })
 
+describe('guest location', () => {
+  it('separates the chat application from a page opened from a conversation', () => {
+    const { probe } = loadPlugin()
+    for (const url of [CHAT_ORIGIN + '/', CHAT_ORIGIN + '/a/chat/s/8f2', CHAT_ORIGIN + '/sign_in']) {
+      assert.equal(probe.isChatUrl(url), true, `${url} is the application`)
+      assert.equal(probe.isGuestPage(url), false, `${url} is the application, not another page`)
+    }
+    for (const url of ['https://example.com/article', 'https://chat.deepseek.com.evil.test/', 'http://chat.deepseek.com.other/']) {
+      assert.equal(probe.isChatUrl(url), false, `${url} is not the application`)
+      assert.equal(probe.isGuestPage(url), true, `${url} is a page the user opened from a conversation`)
+    }
+    for (const url of [CHAT_ORIGIN + '/robots.txt', 'about:blank#lease', 'dsh-app://app/', '', undefined]) {
+      assert.equal(probe.isChatUrl(url), false, `${url} is not the chat interface`)
+      assert.equal(probe.isGuestPage(url), false, `${url} is not a page the user opened either`)
+    }
+  })
+})
+
 /**
  * A DOM stand-in rich enough to activate the plugin. `brand` makes the sidebar title
- * findable, which is what turns the switcher on.
+ * findable, which is what turns the switcher on; `guestUrl` is what the stand-in guest
+ * reports as its current page.
  */
 function fakeDom(options = {}) {
   const make = (tag) => {
     const attributes = new Map()
     const listeners = []
-    return {
+    const node = {
       tagName: tag.toUpperCase(),
       id: '',
       type: '',
@@ -178,6 +197,7 @@ function fakeDom(options = {}) {
       hidden: false,
       style: {},
       children: [],
+      parentElement: null,
       attributes,
       listeners,
       textContent: '',
@@ -193,10 +213,35 @@ function fakeDom(options = {}) {
       contains: () => false,
       closest: () => null,
     }
+    if (tag === 'webview') {
+      // Electron answers every one of these only after the guest is attached and has
+      // emitted dom-ready; the stand-in keeps that rule, so a test fails loudly when the
+      // plugin reads the guest too early. Calls the plugin makes are recorded on
+      // `options`, which the caller keeps.
+      const expectReady = () => {
+        if (options.guestReady !== true) {
+          throw new Error('The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.')
+        }
+      }
+      node.getURL = () => { expectReady(); return options.guestUrl ?? '' }
+      node.canGoBack = () => { expectReady(); return options.canGoBack === true }
+      node.goBack = () => { expectReady(); options.goBacks = (options.goBacks ?? 0) + 1 }
+      node.loadURL = (url) => { expectReady(); (options.loads ??= []).push(url); return Promise.resolve() }
+      node.setUserAgent = () => { expectReady() }
+      node.executeJavaScript = () => { expectReady(); return Promise.resolve('') }
+    }
+    return node
   }
   const brandIdentity = make('span')
   const brandButton = make('button')
   brandIdentity.closest = (selector) => (selector === 'button' ? brandButton : null)
+  // The shell's frame publishes its column solve, so the view can read the insets.
+  const frame = make('div')
+  const root = make('div')
+  root.id = 'root'
+  frame.parentElement = root
+  brandIdentity.parentElement = brandButton
+  brandButton.parentElement = frame
   const documentElement = make('html')
   documentElement.dataset = {}
   const documentListeners = new Map()
@@ -223,9 +268,17 @@ function loadForActivation(options = {}) {
       setInterval: () => 1,
       clearInterval: () => {},
       open: () => {},
+      dshDesktop: {
+        browser: {
+          acquire: () => Promise.resolve({ lease: 'lease-1', partition: 'partition-1' }),
+          release: () => Promise.resolve(),
+          onOpenRequested: () => () => {},
+        },
+      },
     },
     document: dom.document,
     localStorage: storage(),
+    navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' },
     MutationObserver: class { observe() {} disconnect() {} },
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
     console,
@@ -238,6 +291,40 @@ function loadForActivation(options = {}) {
   vm.runInContext(source, host)
   assert.equal(typeof host.__factory, 'function', 'factory not captured')
   return { module: host.__factory(), dom }
+}
+
+/** Run the plugin and open the view the way the sidebar title does. */
+async function openView(options = {}) {
+  // The stand-in guest records what the plugin does to it on this same object, so the
+  // caller keeps the spies.
+  options.brand = true
+  const { module, dom } = loadForActivation(options)
+  module.apply({ effect: (fn) => { fn(); return () => {} } })
+  const click = dom.brandButton.listeners.find(([type]) => type === 'click')[1]
+  click({ preventDefault() {}, stopImmediatePropagation() {} })
+  // build() awaits the lease round trip before it reveals the view.
+  await new Promise((resolve) => setImmediate(resolve))
+  const host = dom.document.body.children.find((node) => node.id === 'dsh-chat-view')
+  assert.ok(host, 'opening the view must attach its host')
+  const back = host.children.find((node) => node.id === 'dsh-chat-view-back')
+  assert.ok(back, 'the view must offer the round control')
+  const guest = host.children.find((node) => node.tagName === 'WEBVIEW')
+  assert.ok(guest, 'opening the view must attach its guest')
+  const fire = (type) => {
+    for (const [name, listener] of [...guest.listeners]) if (name === type) listener({})
+  }
+  return {
+    dom,
+    host,
+    back,
+    guest,
+    options,
+    clickControl: () => back.listeners.find(([type]) => type === 'click')[1]({}),
+    // The guest attaches and boots, exactly as the real element reports it.
+    ready: () => { options.guestReady = true; fire('dom-ready') },
+    // The guest lands on another page, the way a link or a route change does.
+    navigate: (url) => { options.guestUrl = url; fire('did-navigate') },
+  }
 }
 
 // Nothing else in this file calls `apply`, and that gap is how a fatal ReferenceError
@@ -264,5 +351,57 @@ describe('activation', () => {
     dispose()
     assert.equal(dom.brandButton.getAttribute('data-dsh-product-trigger'), null, 'teardown must restore the title')
     assert.equal(dom.documentListeners.has('click'), false, 'teardown must drop the host-click guard')
+  })
+
+  it('reveals the view on the first click, before the guest is ready', async () => {
+    // The regression this guards: reading the fresh element's address in the reveal path
+    // threw Electron's "must be attached … dom-ready" error, so the first click after a
+    // launch handed the URL to the system browser and only the second click showed the view.
+    const { host, back, options, clickControl } = await openView({ guestUrl: 'https://example.com/article', canGoBack: true })
+    assert.equal(host.hidden, false, 'the first click must open the view, not the system browser')
+    assert.equal(back.getAttribute('aria-label'), '返回 DeepSeek Harness', 'without a page there is nothing to go back to inside the view')
+    assert.equal(options.goBacks, undefined, 'a guest that is not ready must not be asked anything')
+    clickControl()
+    assert.equal(host.hidden, true, 'the control keeps its plain meaning until the guest is ready')
+  })
+
+  it('returns to the conversation a page was opened from', async () => {
+    const { host, back, options, ready, navigate, clickControl } = await openView({ canGoBack: true })
+    ready()
+    navigate('https://example.com/article')
+    assert.equal(back.getAttribute('aria-label'), '返回 DeepSeek Chat', 'the control must say where it goes')
+    clickControl()
+    assert.equal(options.goBacks, 1, 'the guest must step back to the conversation it came from')
+    assert.equal(host.hidden, false, 'the view stays up while the guest is away from the chat interface')
+  })
+
+  it('returns to the harness from the chat interface', async () => {
+    const { host, back, options, ready, clickControl } = await openView({ guestUrl: CHAT_ORIGIN + '/a/chat/s/8f2' })
+    ready()
+    assert.equal(back.getAttribute('aria-label'), '返回 DeepSeek Harness', 'the control must say where it goes')
+    clickControl()
+    assert.equal(host.hidden, true, 'the chat interface has nothing to go back to inside the view')
+    assert.equal(options.goBacks, undefined, 'the guest must not be moved')
+  })
+
+  it('still leaves the view when the guest is not showing a page', async () => {
+    const { host, options, ready, clickControl } = await openView({ guestUrl: 'dsh-app://app/', canGoBack: true })
+    ready()
+    clickControl()
+    assert.equal(host.hidden, true, 'a guest that is not showing a page keeps the plain meaning')
+    assert.equal(options.goBacks, undefined)
+  })
+
+  it('reopens the last chat interface when the guest cannot step back itself', async () => {
+    const conversation = CHAT_ORIGIN + '/a/chat/s/8f2'
+    const { options, ready, navigate, clickControl } = await openView({})
+    ready()
+    navigate(conversation)
+    // The user follows a link out of the conversation, then asks the control for the chat
+    // interface; the guest reports no usable history, so the recorded address is used.
+    navigate('https://example.com/article')
+    options.canGoBack = false
+    clickControl()
+    assert.equal(options.loads.at(-1), conversation, 'the conversation must be reloaded instead of lost')
   })
 })

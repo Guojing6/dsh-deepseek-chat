@@ -5,7 +5,8 @@ DeepSeek Harness 客户端插件（web 与 desktop profile），把侧边栏顶�
 | 点哪里 | 结果 |
 | --- | --- |
 | DSH 侧边栏顶部的标题 | Desktop：在**应用内**切换到 chat.deepseek.com（窗口内嵌视图）；Web：当前页跳转 |
-| 视图右下角的圆形返回按钮 | 切回 DSH（Desktop） |
+| 视图右下角的圆形返回按钮（视图内是 chat 界面时） | 切回 DSH（Desktop） |
+| 视图右下角的圆形返回按钮（视图内是从对话点开的网页时） | 回到 chat 界面（Desktop） |
 
 没有菜单——点一下就切换，两个方向读起来一致。独立的「新会话」按钮不受影响；展开侧边栏后点顶部标题即可使用。
 
@@ -39,6 +40,8 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 返回有两个入口：**右下角的圆形返回图标按钮**（位于输入框右侧上方，不遮挡发送按钮；图标取自「返回-圆形填充」，内联后改用 `currentColor` 与 DSH 的主题变量，深浅色都能跟），或**点侧边栏顶部的标题**。切回后再点标题会回到同一视图（不重新加载，保留视图内状态）。
 
+这颗圆形按钮只有一颗，含义看 guest 当前停在哪：**视图内是从对话里点开的网页时**（回答里的链接就在这一个视图里打开，见下文 `onOpenRequested`），点它沿 guest 自己的 Chromium 历史退回那个对话——与浏览器后退同义，应用不重新加载、草稿与滚动位置都还在，鼠标提示同步写成「返回 DeepSeek Chat」；**视图内就是 chat 界面时**，它把视图收起来、回到 DSH，提示回到「返回 DeepSeek Harness」。判断依据只有地址：`chat.deepseek.com` 上的文档算 chat 界面，插件自己加载的种子页（`/robots.txt`）不算，其余 http(s) 文档都算「从对话点开的网页」。
+
 视图的位置和圆角不是写死的：宿主的 frame 元素发布 `--dsh-windows-sidebar-width` 与 `--dsh-windows-content-radius`，顶栏高度由 Windows preload 写在 `<html>` 上；插件在每次切换时读取这三者并套用到视图上，所以侧边栏拖拽或折叠之后，视图仍与内容区严丝合缝。
 
 这不是 Codex 那种原生产品切换——Codex 的 ChatGPT/Codex 都是 OpenAI 自家界面，而 DeepSeek Chat 是 DSH 之外的独立网站，只能用 Electron webview 嵌入。以下是当前**已知的问题与限制**，按来源分三类。
@@ -64,6 +67,8 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 - **点侧栏会收起视图。** 侧栏与标题栏留在视图之外、始终可点，所以插件在捕获阶段监听文档的 `click`：落到视图与品牌之外（会话行、设置、窗口菜单）就先收起视图，免得宿主把内容画在视图背后、看起来像「点了没反应」。品牌本身豁免——它自己的处理器就是那个开关。
 - **侧边栏折叠时没有返回入口。** 折叠状态下品牌元素不渲染（`SidebarRoot` 里是 `{wide && …}`），此时需先点顶栏的折叠按钮展开侧边栏，再点标题切回。
+- **「返回」走 guest 自己的历史，依赖「视图先进入 chat 再打开链接」这条路径。** guest 的 Chromium 历史里，chat 界面一定排在从对话点开的网页之前（视图先 `loadURL(首页)`，之后链接才可能打开），所以后退一步就是那个对话。若某次历史被页面自己 `replaceState` 顶掉、或 guest 报告无法后退，插件退回加载**它记录到的最后一个 chat 地址**（`did-navigate` / `did-navigate-in-page` 时记录），代价是应用重新加载一次；连跳多层外链时一次点击只退一层，与浏览器一致，需要连点。
+- **视图在 guest 就绪之前就已经露出来了。** `<webview>` 自己的方法（`getURL`、`canGoBack`、`goBack`、`loadURL`、`setUserAgent`、`executeJavaScript`）在 guest attach 并发出 `dom-ready` 之前一律抛 `The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called`（Electron 44 实测，日志里就是这句）。所以「读 guest」全部收在 `guestUrl()` 后面（`dom-ready` 时才置 `guestReady`），显示路径绝不碰元素，按钮也只在就绪后才按地址分流。这条踩过一次：在 `show()` 里读了一次地址，于是**每次启动后的第一次点击都抛错、走「打开系统浏览器」的兜底，第二次点击才进视图**——现在有一条专门用例守住它。
 - **Web 端行为随之改变。** 同一份代码在 web 下走另一条路径：点标题直接 `location.assign(chat.deepseek.com)`，不再弹菜单。若希望 Web 保留菜单式交互，需要按 `IS_DESKTOP` 分成两条路径。
 - **macOS 分支未实测。** 品牌在 macOS Desktop 下是窗口拖拽行里的 `span`（不是 button），代码按 `closest("button") ?? parentElement` 回退并补 `role="button"` / `tabindex="0"`，依据是 `SidebarRoot.tsx` 与 `base.css` 的规则推导，未在真机验证。
 - **按钮位置是按截图估算的。** `right: 24px; bottom: 150px` 由截图缩放比例换算而来，未做像素级校准。
@@ -76,7 +81,7 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 ## 实现
 
 - `lib/client.js`：以 `span[class*="brandIdentity"]` 定位宿主品牌元素。该类名带构建期 CSS Module 哈希，Web 与 Desktop 构建各不相同（实测 Web 为 `hHd-Xa_brandIdentity`、Desktop 为 `_2H3hWW_brandIdentity`），因此匹配稳定的局部名而非某个哈希。触发器取 `closest("button")`：Web 与 Windows/Linux Desktop 的品牌是「新建会话」按钮，macOS Desktop 则是窗口拖拽行里的 `span`，此时回退到该元素并补上 `role="button"` 与 `tabindex="0"`，既脱离宿主拖拽规则又可聚焦。在捕获阶段拦截点击（宿主 React 委托到根节点，捕获拦截有效），改为切换 DeepSeek Chat 视图。
-- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再按「bootstrap → 种子页 → 首页」推进（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在同一视图打开。**对 guest 只做存储读写、不改页面**：`dom-ready` 与可见期间每 15 秒各读一次 guest 的 localStorage（超长非关键键会按 200 KB 上限裁掉，`userToken` 与 `__appKit_userInfo` 永不裁），仅在读到 `userToken` 时写入宿主快照；下次启动先加载 `/robots.txt`（同源、31 字节、不启动应用），把快照写回后再进首页。隐藏时保留 guest 以便即时切回，同时停掉轮询并顺手快照一次；视图只在租约到手后才显示（先显示会先露出一块白底）；构建失败会把元素与租约一起退回，插件停用时停表、断开布局观察器、释放租约并移除元素。
+- Desktop 视图：经 `window.dshDesktop.browser.acquire()` 取得租约与分区，创建 `src="about:blank#<lease>"` 的 `<webview>`；`dom-ready` 后先 `setUserAgent()` 换成标准 Chromium UA，再按「bootstrap → 种子页 → 首页」推进（guest 默认继承带 Electron 与产品标识的 UA，DeepSeek Chat 会据此弹出「使用环境异常」警告；`setUserAgent` 直接改 guest 的 webContents，不受壳清空 webPreferences 的影响）。视图内要求新窗口的链接通过 `onOpenRequested` 在**同一视图**打开——所以回答里的链接会把 guest 带离 chat 界面，返回按钮因此按地址分两种语义（`isChatUrl` / `isGuestPage`）：网页在眼前时 `goBack()`（guest 无法后退则 `loadURL` 到记录下来的最后一个 chat 地址），回到 chat 界面；chat 界面在眼前时收起视图。`did-navigate` 与 `did-navigate-in-page` 都会刷新按钮文案并记录 chat 地址，所以应用内部的路由跳转也算数。**读 guest 一律经过 `guestUrl()`**：`dom-ready` 之前元素的方法都会抛错，而视图在租约到手时就露出来了（见「已知问题」里那条），所以显示路径只用 `guestReady` 为真时的地址，否则当作「没有页面」。**对 guest 只做存储读写、不改页面**：`dom-ready` 与可见期间每 15 秒各读一次 guest 的 localStorage（超长非关键键会按 200 KB 上限裁掉，`userToken` 与 `__appKit_userInfo` 永不裁），仅在读到 `userToken` 时写入宿主快照；下次启动先加载 `/robots.txt`（同源、31 字节、不启动应用），把快照写回后再进首页。隐藏时保留 guest 以便即时切回，同时停掉轮询并顺手快照一次；视图只在租约到手后才显示（先显示会先露出一块白底）；构建失败会把元素与租约一起退回，插件停用时停表、断开布局观察器、释放租约并移除元素。
 - `lib/index.js`：空服务端入口；`cordis.patch.yml`：向 web roster 注册 `chat-entry`。
 - 开关只绑定一次，宿主重建侧边栏后需刷新页面重绑。
 - 停用时通过 `ctx.effect` 完整清理：恢复标题属性、移除监听器/观察器、释放桌面视图、删除样式。
@@ -85,10 +90,10 @@ Desktop 下选择 DeepSeek Chat **不会跳到浏览器**，而是在同一个�
 
 ```sh
 npm run check   # 语法检查（node --check lib/*.js）
-npm test        # 8 个用例（node --test，无外部依赖）
+npm test        # 14 个用例（node --test，无外部依赖）
 ```
 
-`test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖两段：会话镜像的快照裁剪、恢复写入、失败上报与宿主侧快照的版本/来源校验；以及**激活冒烟测试**——不加任何探针、直接跑真实源码的 `apply`，断言 Desktop 下不抛错、拿到可用的 teardown、品牌被绑上 `data-dsh-product-trigger` 与点击监听、卸载时属性与文档监听都被还原。这一段是补上来的：此前没有任何用例调用过 `apply`，所以「激活路径里引用未定义变量」这类故障能一路漏过去（故意注入一个未定义全局做变异测试，正是这两个用例报错）。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
+`test/session.test.mjs` 用桩 DOM 加载插件本体，覆盖四段：会话镜像的快照裁剪、恢复写入、失败上报与宿主侧快照的版本/来源校验；**地址判定**——chat 应用、插件自己的种子页、从对话点开的外链、非 http(s) 文档各归哪一类；以及**激活冒烟测试**——不加任何探针、直接跑真实源码的 `apply`，断言 Desktop 下不抛错、拿到可用的 teardown、品牌被绑上 `data-dsh-product-trigger` 与点击监听、卸载时属性与文档监听都被还原，并用桩 guest 打开视图，验证那颗圆按钮在「网页在眼前」时走 guest 的后退（guest 报不了后退就重载记录下来的 chat 地址）、在「chat 界面在眼前」时收起视图、文案跟着变。桩 guest 照抄 Electron 的契约：**`dom-ready` 之前任何方法都抛错**，所以「启动后第一次点击就露视图」这条回归会被用例当场抓住。激活这一段是补上来的：此前没有任何用例调用过 `apply`，所以「激活路径里引用未定义变量」这类故障能一路漏过去（故意注入一个未定义全局做变异测试，正是这两个用例报错）。它不需要 `jsdom`；若 `node --test` 因沙箱禁止子进程而报 `spawn EPERM`，改用 `node --test --test-isolation=none` 或直接 `node test/session.test.mjs`。
 
 ## 发布
 
